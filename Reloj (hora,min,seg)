@@ -1,0 +1,286 @@
+PROCESSOR 16F887
+ #include <xc.inc>
+ 
+;*******************************************************************************
+;				CONFIGURACIÃ?N DE BITS
+;*******************************************************************************
+ 
+;configuration word 1
+ CONFIG FOSC=INTRC_NOCLKOUT ; Oscilador externo de cristal a 1MHz
+ CONFIG WDTE=OFF    ; wdt disables (reinicio repetitivo del pic)
+ CONFIG PWRTE=ON    ; PWRT enabled (espera de 72ms al iniciar)
+ CONFIG MCLRE=OFF   ; El pin de MCLR se utiliza como I/O
+ CONFIG CP=OFF	    ; Sin protecciÃ³n de cÃ³digo
+ CONFIG CPD=OFF	    ; Sin protecciÃ³n de datos
+ 
+ CONFIG BOREN=OFF   ; Sin reinicio cuÃ¡ndo el voltaje de alimentaciÃ³n baja de 4V
+ CONFIG IESO=OFF    ; Reinicio sin cambio de reloj de interno a externo
+ CONFIG FCMEN=OFF   ; Cambio de reloj externo a interno en caso de fallo
+ CONFIG LVP=ON	    ; programaciÃ³n en bajo voltaje permitida
+ 
+ ;configuration word 2
+ CONFIG WRT=OFF	    ; ProtecciÃ³n de autoescritura por el programa desactivada
+ CONFIG BOR4V=BOR40V ; Reinicio abajo de 4v, (BOR21V=2.1V)
+ 
+ 
+;*******************************************************************************
+;				    VARIABLES
+;*******************************************************************************
+ 
+PSECT udata_bank0 
+;**Contadores*******************************************************************
+    cont_u_seg:		DS 1
+    cont_d_seg:         DS 1
+    cont_u_min:		DS 1
+    cont_d_min:         DS 1
+    cont_u_hora:	DS 1
+    cont_d_hora:        DS 1
+    cont_timer0:	DS 1 
+    
+PSECT udata_shr ;memoria compartida
+    w_temp:	 DS 1
+    status_temp: DS 1
+    
+;*******************************************************************************
+;			   INSTRUCCIONES VECTOR DE RESET
+;*******************************************************************************
+
+ PSECT resVector, class=CODE, abs, delta=2
+ ORG 00h	    ; posiciÃ³n 0000h para el reset
+ resetVector:
+    PAGESEL main
+    goto main
+ 
+;*******************************************************************************
+;			   SECTOR DE INTERRUPCIOENS
+;*******************************************************************************
+
+PSECT intVect, class=CODE,abs, delta=2
+ORG 04h
+push:
+    movwf w_temp	;guardado del valor de W
+    swapf STATUS, w	;guardado del valor del STATUS
+    movwf status_temp
+
+isr:
+    btfsc T0IF		;interrupciÃ³n Timer0
+    call  int_tm0
+
+pop:
+    swapf status_temp, w
+    movwf STATUS
+    swapf w_temp, f
+    swapf w_temp, w
+    retfie
+ 
+;*******************************************************************************
+;			CONFIGURACIÃ?N DEL MICROCONTROLADOR
+;*******************************************************************************
+
+PSECT code, delta=2, abs
+ORG 100h
+siete_seg:
+    clrf    PCLATH
+    bsf	    PCLATH, 0
+    andlw   0Fh
+    addwf   PCL, F
+    retlw   3Fh		    ; 0
+    retlw   06h		    ; 1
+    retlw   5Bh		    ; 2
+    retlw   4Fh		    ; 3
+    retlw   66h		    ; 4
+    retlw   6Dh		    ; 5
+    retlw   7Dh		    ; 6
+    retlw   07h		    ; 7
+    retlw   7Fh		    ; 8
+    retlw   6Fh		    ; 9
+    
+main:
+    call    config_IO	    ;inputs PORTB, outputs PORTA, C, D
+    call    Tm0_config	    
+    call    reloj_config    ;a 1MHz
+    call    config_interrup 
+    banksel PORTA
+    clrf    PORTA
+    movlw   3Fh
+    movwf   PORTC
+    movwf   PORTD
+    clrf    cont_u_seg
+    clrf    cont_d_seg
+    clrf    cont_timer0
+    
+;*******************************************************************************
+;				    LOOP PRINCIPAL
+;*******************************************************************************
+loop:
+    call siete_seg_auto
+    goto loop
+;*******************************************************************************
+;				    SUBRUTINAS
+;*******************************************************************************
+
+;*******************************CONFIGURACIONES*********************************
+
+config_IO: 
+    banksel ANSEL
+    clrf    ANSEL	    ; pines digitales
+    clrf    ANSELH
+    
+    banksel TRISA
+    clrf    TRISA	    ;PORT A, C y D como salidas
+    clrf    TRISC   
+    clrf    TRISD
+    return
+
+Tm0_config:
+    banksel TRISA
+    bcf	    T0CS	    ;selecciÃ³n del reloj interno
+    bcf	    PSA		    ;asignamos prescaler al Timer0
+    bsf	    PS2
+    bsf	    PS1
+    bcf	    PS0		    ;prescaler a 128
+    banksel PORTA
+    movlw   217
+    movwf   TMR0
+    bcf	    T0IF
+    return
+
+reloj_config:
+    banksel TRISA
+    bsf	    IRCF2
+    bcf	    IRCF1
+    bcf	    IRCF0	    ; reloj a 1MHz 
+    return
+
+config_interrup:
+    banksel TRISA
+    bsf	    GIE
+    
+    bsf	    RBIE	    ;interrupciÃ³n del puerto B
+    bcf	    RBIF
+    
+    bsf	    T0IE	    ;interrupciÃ³n del Timer0
+    bcf	    T0IF   
+    return
+
+;****************************RUTINAS DE INTERRUPCIONES**************************  
+int_tm0:
+    banksel PORTA	
+    movlw   217
+    movwf   TMR0	    ;reseteo del Timer0
+    bcf	    T0IF	    ;limpieza de la bandera 
+    incf    cont_timer0	    ;incremento de nuestra variable para lograr
+    return		    ;que el display cambie cada segundo
+
+;*****************************RUTINAS DEL LOOP**********************************
+siete_seg_auto:
+    movlw   50		    ;ya que el timer cuenta cada 20ms, debe contar 50
+    subwf   cont_timer0, w  ;veces para llegar al segundo 
+    btfsc   STATUS,2
+    call    clock
+    return
+   
+clock:
+    clrf    cont_timer0	    ;se resetea la variable
+    incf    cont_u_seg	    ;se incrementa la varable que lleva el valor del
+    movf    cont_u_seg, W    ;segundo 7 segmentos, se llama la tabla para 
+    sublw   10
+    btfsc   STATUS,2
+    call    decenas_seg
+    movf    cont_u_seg, W
+    call    siete_seg	    ;traducirla y pegarla en el PORTD
+    movwf   PORTD 
+    return
+    
+    decenas_seg:
+	clrf cont_u_seg
+	call aumento_d_segundos
+	return
+    
+aumento_d_segundos:
+    clrf    cont_timer0	    ;se resetea la variable
+    incf    cont_d_seg      ;incrementamos las decenas de segundos por si acaso
+    movf    cont_d_seg, W
+    sublw   6
+    btfsc   STATUS, 2
+    call    unidad_min
+    movf    cont_d_seg, W
+    call    siete_seg	    ;traducirla y pegarla en el PORTD
+    movwf   PORTC
+    bcf    T0IF
+    return
+    
+    unidad_min:
+	clrf cont_d_seg
+	call aumento_u_minutos
+	return
+    
+aumento_u_minutos:
+    clrf    cont_timer0	    ;se resetea la variable
+    incf    cont_u_min     ;incrementamos las decenas de segundos por si acaso
+    movf    cont_u_min, W
+    sublw   10
+    btfsc   STATUS, 2
+    call    decena_min
+    movf    cont_u_min, W
+    call    siete_seg	    ;traducirla y pegarla en el PORTD
+    movwf   PORTC
+    bcf    T0IF
+    return
+
+    decena_min:
+       clrf cont_u_min
+       call aumento_d_minutos
+       return
+       
+aumento_d_minutos:
+    clrf    cont_timer0	    ;se resetea la variable
+    incf    cont_d_min      ;incrementamos las decenas de segundos por si acaso
+    movf    cont_d_min, W
+    sublw   6
+    btfsc   STATUS, 2
+    call    unidad_hora
+    movf    cont_d_min, W
+    call    siete_seg	    ;traducirla y pegarla en el PORTD
+    movwf   PORTC
+    bcf    T0IF
+    return
+    
+    unidad_hora:
+	 clrf cont_d_min
+	 call aumento_u_hora
+	 return   
+	 
+aumento_u_hora:
+    clrf    cont_timer0	    ;se resetea la variable
+    incf    cont_u_hora     ;incrementamos las decenas de segundos por si acaso
+    movf    cont_u_hora, W
+    sublw   10
+    btfsc   STATUS, 2
+    call    decena_hora
+    movf    cont_u_hora, W
+    call    siete_seg	    ;traducirla y pegarla en el PORTD
+    movwf   PORTC
+    bcf    T0IF
+    return
+
+    decena_hora:
+       clrf cont_u_hora
+       call aumento_d_hora
+       return
+       
+aumento_d_hora:
+    clrf    cont_timer0	    ;se resetea la variable
+    incf    cont_d_hora      ;incrementamos las decenas de segundos por si acaso
+    movf    cont_d_hora, W
+    sublw   6
+    btfsc   STATUS, 2
+    clrf    cont_d_hora
+    movf    cont_d_hora, W
+    call    siete_seg	    ;traducirla y pegarla en el PORTD
+    movwf   PORTC
+    bcf    T0IF
+    return
+
+
+    END
