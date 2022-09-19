@@ -1,286 +1,800 @@
+;*******************************************************************************
+; Universidad del Valle de Guatemala	
+; IE2023 Programación de microcontroladores
+; Autor: Michelle Serrano 
+; Compilador: PIC-AS (v2.36), MPLAB X IDE (v6.00)
+; Proyecto: RELOJ
+; Hardware: PIC16F887
+;*******************************************************************************
 PROCESSOR 16F887
- #include <xc.inc>
- 
-;*******************************************************************************
-;				CONFIGURACIÃ?N DE BITS
-;*******************************************************************************
- 
-;configuration word 1
- CONFIG FOSC=INTRC_NOCLKOUT ; Oscilador externo de cristal a 1MHz
+#include <xc.inc>
+    
+; *****************************************************************************
+;                            CONFIGURACION DE BITS                           
+; *****************************************************************************  
+CONFIG FOSC=INTRC_NOCLKOUT ; Oscilador externo de cristal a 1MHz
  CONFIG WDTE=OFF    ; wdt disables (reinicio repetitivo del pic)
  CONFIG PWRTE=ON    ; PWRT enabled (espera de 72ms al iniciar)
  CONFIG MCLRE=OFF   ; El pin de MCLR se utiliza como I/O
  CONFIG CP=OFF	    ; Sin protecciÃ³n de cÃ³digo
  CONFIG CPD=OFF	    ; Sin protecciÃ³n de datos
  
- CONFIG BOREN=OFF   ; Sin reinicio cuÃ¡ndo el voltaje de alimentaciÃ³n baja de 4V
+ CONFIG BOREN=OFF   ; Sin reinicio cuÃ¡ndo el voltaje de alimentaciÃ³n baja de4V
  CONFIG IESO=OFF    ; Reinicio sin cambio de reloj de interno a externo
  CONFIG FCMEN=OFF   ; Cambio de reloj externo a interno en caso de fallo
  CONFIG LVP=ON	    ; programaciÃ³n en bajo voltaje permitida
  
- ;configuration word 2
  CONFIG WRT=OFF	    ; ProtecciÃ³n de autoescritura por el programa desactivada
  CONFIG BOR4V=BOR40V ; Reinicio abajo de 4v, (BOR21V=2.1V)
- 
- 
-;*******************************************************************************
-;				    VARIABLES
-;*******************************************************************************
- 
-PSECT udata_bank0 
-;**Contadores*******************************************************************
-    cont_u_seg:		DS 1
-    cont_d_seg:         DS 1
-    cont_u_min:		DS 1
-    cont_d_min:         DS 1
-    cont_u_hora:	DS 1
-    cont_d_hora:        DS 1
-    cont_timer0:	DS 1 
+
+;*****************************************************************************
+;                                  MACROS                                    
+;*****************************************************************************
+restart_tmr0 macro ; Reseteo del tmr0
+    banksel PORTA   
+    movlw   6	    ; N = 61   
+    movwf   TMR0    ; Ciclo de 2ms
+    bcf	    T0IF    
+endm
     
-PSECT udata_shr ;memoria compartida
-    w_temp:	 DS 1
-    status_temp: DS 1
+wdivl	macro	divisor,cociente,residuo    ; Macro de divisor
+	movwf	conteo	    
+	clrf	conteo+1  ; Limpiar la variable que está sobre w
+	
+	incf	conteo+1    ; Aumentar conteo + 1
+	movlw	divisor	    
+	
+	subwf	conteo,f    ; Restar de w conteo, y guardarlo en conteo
+	btfsc	STATUS,0    ; Si carry 0, decrementar conteo+1
+	goto	$-4
+	
+	decf	conteo+1,w  ; Decrementar conteo+1 
+	movwf	cociente    ; Pasar w a cociente
+	
+	movlw	divisor	    
+	addwf	conteo,w     
+	movwf	residuo	     
+  endm
+;*****************************************************************************
+;                                  VARIABLES                                 
+;*****************************************************************************      
+PSECT udata_shr
+    W_TEMP:	    DS 1	
+    STATUS_TEMP:    DS 1	
     
-;*******************************************************************************
-;			   INSTRUCCIONES VECTOR DE RESET
-;*******************************************************************************
-
- PSECT resVector, class=CODE, abs, delta=2
- ORG 00h	    ; posiciÃ³n 0000h para el reset
- resetVector:
-    PAGESEL main
-    goto main
- 
-;*******************************************************************************
-;			   SECTOR DE INTERRUPCIOENS
-;*******************************************************************************
-
-PSECT intVect, class=CODE,abs, delta=2
-ORG 04h
-push:
-    movwf w_temp	;guardado del valor de W
-    swapf STATUS, w	;guardado del valor del STATUS
-    movwf status_temp
-
-isr:
-    btfsc T0IF		;interrupciÃ³n Timer0
-    call  int_tm0
-
-pop:
-    swapf status_temp, w
-    movwf STATUS
-    swapf w_temp, f
-    swapf w_temp, w
-    retfie
- 
-;*******************************************************************************
-;			CONFIGURACIÃ?N DEL MICROCONTROLADOR
-;*******************************************************************************
-
-PSECT code, delta=2, abs
-ORG 100h
-siete_seg:
-    clrf    PCLATH
-    bsf	    PCLATH, 0
-    andlw   0Fh
-    addwf   PCL, F
-    retlw   3Fh		    ; 0
-    retlw   06h		    ; 1
-    retlw   5Bh		    ; 2
-    retlw   4Fh		    ; 3
-    retlw   66h		    ; 4
-    retlw   6Dh		    ; 5
-    retlw   7Dh		    ; 6
-    retlw   07h		    ; 7
-    retlw   7Fh		    ; 8
-    retlw   6Fh		    ; 9
+PSECT udata_bank0
+    ; Variables de reloj
+    var_segundos:		DS 1	
+    var_min:		DS 1	
+    var_hora:		DS 1	
+    var_dias:		DS 1	 
+    var_mes:		DS 1	
+    meses_var:		DS 1	
     
-main:
-    call    config_IO	    ;inputs PORTB, outputs PORTA, C, D
-    call    Tm0_config	    
-    call    reloj_config    ;a 1MHz
-    call    config_interrup 
-    banksel PORTA
-    clrf    PORTA
-    movlw   3Fh
-    movwf   PORTC
-    movwf   PORTD
-    clrf    cont_u_seg
-    clrf    cont_d_seg
-    clrf    cont_timer0
+    ; Displays
+    display:	        DS 1	
+    segundos:		DS 1 
+    display0:		DS 1	
+    display1:		DS 1	
+    display2:		DS 1	
+    display3:		DS 1	
     
-;*******************************************************************************
-;				    LOOP PRINCIPAL
-;*******************************************************************************
-loop:
-    call siete_seg_auto
-    goto loop
-;*******************************************************************************
-;				    SUBRUTINAS
-;*******************************************************************************
+    ; Estados y modos
+    estados:		DS 1	
+    modos:		DS 1	
+    delay:              DS 1
+    ; Macro de division
+    residuo:		DS 1	
+    cociente:		DS 1	
+    conteo:		DS 1	
 
-;*******************************CONFIGURACIONES*********************************
-
-config_IO: 
-    banksel ANSEL
-    clrf    ANSEL	    ; pines digitales
-    clrf    ANSELH
+;*****************************************************************************
+;                                 VECTOR RESET                               
+;*****************************************************************************     
+PSECT resVet, class=CODE, delta=2, abs
+    ORG 00h
+    resetVec:
+	PAGESEL main
+	goto	main
+	
+;*****************************************************************************
+;                             VECTOR INTERRUPCION                            
+;*****************************************************************************
+PSECT intVect, class=CODE, delta=2, abs
+    ORG 04h
     
-    banksel TRISA
-    clrf    TRISA	    ;PORT A, C y D como salidas
-    clrf    TRISC   
-    clrf    TRISD
+; *****************************************************************************
+;                               INTERRUPCIONES                               
+; *****************************************************************************    
+    push:
+	movwf	W_TEMP	    
+	swapf	STATUS,w        
+	movwf	STATUS_TEMP 
+	
+    isr:
+	btfsc	TMR1IF	    
+	call	int_tmr1	    ; Interrupcion del tmr1
+	
+	btfsc	TMR2IF	    
+	call	int_tmr2	    ; Interrupcion del tmr2
+	
+	btfsc	T0IF	    
+	call	int_tmr0	    ; Interrupcion del tmr0
+	
+	btfsc	RBIF	    
+	call	int_portb    ; Interrupcion del puerto B
+	
+    pop:
+	swapf	STATUS_TEMP,w	
+	movwf	STATUS		
+	swapf	W_TEMP,f	
+	swapf	W_TEMP,w
+    RETFIE			
+    
+    ;***************************************************************************
+    ; 	                     SUBRUTINAS DE INTERRUPCION	                      
+    ;***************************************************************************
+   
+    ;***************************************************************************
+    ; 	                       INTERRUPCION DEL TMR0	                      
+    ;***************************************************************************
+	int_tmr0: ;MULTIPLEXADO
+	restart_tmr0
+	btfsc	display,0	; Si display 0 es 1, va a display_0
+	goto	display_0
+	btfsc	display,1	; Si display 1 es 1, va a display_1
+	goto	display_1
+	btfsc	display,2	; Si display 2 es 1, va a display_2
+	goto	display_2
+	btfsc	display,3	; Si display 3 es 1, va a display_3
+	goto	display_3
+    
+    ; SUBRUTINAS 
+	display_0:
+	    clrf    display	    ; Limpiar la variable
+	    bsf	    display, 1      
+	    clrf    PORTA	    ; Limpiar PORTA
+	    bsf	    PORTA, 0	    ; transistor de display 0
+	    movf    display0, w	    ; Pasar display0 a w
+	    movwf   PORTC	    ; Pasar w a portc
+	return
+	    
+	display_1:  
+	    clrf    display	    
+	    bsf	    display, 2      
+	    clrf    PORTA	    
+	    bsf	    PORTA, 1	    
+	    movf    display1, w	   
+	    movwf   PORTC	    
+	return
+	
+	display_2:  
+	    clrf    display	    
+	    bsf	    display, 3     
+	    clrf    PORTA	    
+	    bsf	    PORTA, 2	    
+	    movf    display2, w	    
+	    movwf   PORTC	    
+	    btfsc   segundos, 0	    ; luz cada 500ms
+	    goto    punto
+	return
+	
+	punto:
+	    movlw	0x80        ; Mover 128 a w
+	    addwf	display2,w  ; Sumar display2 a w
+	    movwf	PORTC	    ; Mover w a PORTC	
+	return
+	
+        display_3:		    
+	    clrf    display	    ; Limpiar display
+	    bsf	    display, 0  ; Seter display para display0
+	    clrf    PORTA	    ; Limpiar PORTA
+	    bsf	    PORTA, 3	    ; Setear transistor para diplay3
+	    movf    display3, w	    ; Pasar display3 a w
+	    movwf   PORTC	    ; Pasar w a PORTC	
+	return
+	
+    ;***************************************************************************
+    ; 	                       INTERRUPCION DEL TMR1	                      
+    ;***************************************************************************                                     
+    int_tmr1: ;aumento cada segundo
+	;reinicio timer 1
+	    banksel PORTA
+	    movlw   0x0B	
+	    movwf   TMR1H
+	    movlw   0xDC	
+	    movwf   TMR1L	; Ciclo de 1s
+	    bcf     TMR1IF	
+        incf	var_segundos    ; Aumentar segundos    
+    return
+    
+    ;***************************************************************************
+    ; 	                       INTERRUPCION DEL TMR2	                      
+    ;***************************************************************************                                  
+    int_tmr2:  ;luz cada 500ms
+        ;reincio timer 2
+	    banksel PORTA
+	    bcf TMR2IF	   
+	movlw	0x1                 ; Mover a w 1
+	xorwf	segundos	    ; xorf seg
+    return
+    
+    ;***************************************************************************
+    ; 	                    INTERRUPCIONES DEL PUERTO B	                      
+    ;***************************************************************************
+    int_portb:
+	btfss	PORTB, 0	; Si push de modo está en 0,seguir
+	goto	int_0	    
+    ;****configuraciones de hora y fecha si estamos en modo de modificación*****
+	btfsc	modos,2	    ; si el bit 2 de modos es 1,seguir
+	goto	cambio_reloj 
+	
+	btfsc	modos,3	    ; si el bit 3 de modos es 1, seguir
+	goto	cambio_fechas
+    bcf RBIF	
+    return
+    
+    cambio_fechas:
+	btfss	PORTB, 3 ;Si botón 4 está presionado, incrementa el día
+	incf	var_dias	
+	btfss	PORTB, 4;Si botón 5 está presionado decrecementa los meses
+	decf	var_dias
+	btfss	PORTB, 1 ;Si botón 2 está presionado, incrementar los meses
+	incf	var_mes
+	btfss	PORTB, 2;Si botón 3 está presionado, decremenata los meses
+	decf	var_mes
+    bcf RBIF	
+    return
+    
+    cambio_reloj:
+	btfss	PORTB, 1   ;Si botón 2 está presionado, incrementar minutos
+	goto incremento_minutos
+	btfss	PORTB, 2   ;Si botón 3 está presionado, decrementar minutos
+	goto decrecer_minutos
+	btfss	PORTB, 3   ;Si botón 4 está presionado, incrementar horas
+	goto	incremento_horas
+	btfss	PORTB, 4   ;Si botón 5 está presionado, decrementar horas
+	goto	decrecer_horas
+    bcf RBIF	
+    return		
+    
+    incremento_minutos:
+	incf	var_min	        ; incrementar minutos
+	clrf	var_segundos    ; limpiar segundos
+	;reinicio timer
+	banksel PORTA
+	    movlw   0x0B	
+	    movwf   TMR1H
+	    movlw   0xDC	
+	    movwf   TMR1L	; Ciclo de 1s
+	    bcf     TMR1IF	
+    bcf RBIF	
+    return
+    
+    decrecer_minutos:
+	decf	var_min	        ; reducir minutos
+	clrf	var_segundos    ; limpiar segundos
+	;reinicio timer
+	banksel PORTA
+	    movlw   0x0B	
+	    movwf   TMR1H
+	    movlw   0xDC	
+	    movwf   TMR1L	; Ciclo de 1s
+	    bcf     TMR1IF	
+    bcf RBIF	
+    return
+    
+    incremento_horas:
+	incf	var_hora	; incrementar horas
+	clrf	var_segundos    ; limpiar segundos
+	;reinicio timer
+	banksel PORTA
+	    movlw   0x0B	
+	    movwf   TMR1H
+	    movlw   0xDC	
+	    movwf   TMR1L	; Ciclo de 1s
+	    bcf     TMR1IF	
+    bcf RBIF	
+    return
+    
+    decrecer_horas:
+	decf	var_hora        ; reducir horas
+	clrf	var_segundos    ; limpiar segundos
+	;reinicio timer
+	banksel PORTA
+	    movlw   0x0B	
+	    movwf   TMR1H
+	    movlw   0xDC	
+	    movwf   TMR1L	; Ciclo de 1s
+	    bcf     TMR1IF	
+    bcf RBIF	
     return
 
-Tm0_config:
-    banksel TRISA
-    bcf	    T0CS	    ;selecciÃ³n del reloj interno
-    bcf	    PSA		    ;asignamos prescaler al Timer0
-    bsf	    PS2
-    bsf	    PS1
-    bcf	    PS0		    ;prescaler a 128
-    banksel PORTA
-    movlw   217
-    movwf   TMR0
-    bcf	    T0IF
-    return
-
-reloj_config:
-    banksel TRISA
-    bsf	    IRCF2
-    bcf	    IRCF1
-    bcf	    IRCF0	    ; reloj a 1MHz 
-    return
-
-config_interrup:
-    banksel TRISA
-    bsf	    GIE
+   ;*******************MODOS,FSM************************************************
+    int_0:    
+	incf	estados	     ;incrementar variable estados
+	btfsc	estados, 2   ; Si bit 2 es 1, limpiar la variable
+	clrf	estados	
+	
+	btfsc	estados, 0	
+	goto	modo_fecha	; Si el bit 0 es 1, ir a modo_fecha
+	goto	modo_reloj	; Si el bit 0 es 0, ir a modo reloj
+	
+    modo_fecha:  ;1 
+	btfsc   estados, 1
+	goto    editar_fecha  ; Si el bit 1 es 1, ir a editar_fecha ;11
+	goto	mostar_fecha  ; Si el bit 1 es 0, ir a mostar_fecha ;10
     
-    bsf	    RBIE	    ;interrupciÃ³n del puerto B
-    bcf	    RBIF
-    
-    bsf	    T0IE	    ;interrupciÃ³n del Timer0
-    bcf	    T0IF   
+    modo_reloj:  ;0 
+	btfsc	estados, 1
+	goto    editar_reloj   ; Si el bit 1 es 1, ir a editar_reloj ;01
+	goto	mostar_reloj   ; Si el bit 1 es 0, mostar_reloj ;00
+	
+    editar_fecha:
+	clrf	modos    ; Limpiar variable modos
+	bsf	modos,3  ; Setear modos en 1000
+	clrf	PORTD	 
+	;leds 11
+	bsf	PORTD, 4    
+	bsf	PORTD, 5    
+    bcf RBIF	
     return
+    
+    editar_reloj:
+	clrf	modos    ; Limpiar variable modos
+	bsf	modos,2  ; modos en 0100
+	clrf	PORTD	 
+	;leds 10
+	bsf	PORTD, 5
+    bcf RBIF	
+    return
+    
+    mostar_fecha:
+	clrf	modos    ; Limpiar variable modos
+	bsf	modos,1  ; modos en 0010
+	clrf	PORTD	   
+	;leds 01
+	bsf	PORTD, 4
+    bcf RBIF	
+    return
+    
+    mostar_reloj:
+	clrf	modos     ; Limpiar variable modos
+	bsf	modos,0   ; modos en 0001
+	clrf	PORTD	     
+	;leds 00
+    bcf RBIF	; Limpiar bandera al terminar interrupcion
+    return
+    
+; *****************************************************************************
+;                             TABLA MESES                                    
+; *****************************************************************************
+PSECT CODE, delta=2, abs
+    ORG 0xC0
+    
+    tablaMESES:
+	clrf	PCLATH
+	andlw	0x0f
+	addwf	PCL ; inst 103, PC 104 + 5
+	retlw	0   ; Por si acaso
+	retlw	32  ; Enero
+	retlw	29  ; Febrero
+	retlw	32  ; Marzo
+	retlw	31  ; Abril
+	retlw	32  ; Mayo
+	retlw	31  ; Junio
+	retlw	32  ; Julio
+	retlw	32  ; Agosto
+	retlw	31  ; Septiembre
+	retlw	32  ; Octubre
+	retlw	31  ; Noviembre
+	retlw	32  ; Diciembre
+	retlw	0x0   ; anti error    
+	                   
+; *****************************************************************************
+PSECT CODE, delta=2, abs
+    ORG 100h
+; *****************************************************************************
+;                            TABLA DISPLAY                                  
+; *****************************************************************************
+    tablaDisplay:
+        clrf    PCLATH
+	bsf	    PCLATH, 0
+	andlw   0Fh
+	addwf   PCL, F
+	retlw   3Fh		    ; 0
+	retlw   06h		    ; 1
+	retlw   5Bh		    ; 2
+	retlw   4Fh		    ; 3
+	retlw   66h		    ; 4
+	retlw   6Dh		    ; 5
+	retlw   7Dh		    ; 6
+	retlw   07h		    ; 7
+	retlw   7Fh		    ; 8
+	retlw   6Fh		    ; 9
+	retlw	0x0  ; anti error
+	
+; *****************************************************************************
+;                               CONFIGURACIONES                               
+; *****************************************************************************
+    main:
+	call	config_io		; PORTC y PORTD como salidas
+	call	config_iocrb
+	call	config_reloj		; 500kHz
+	call    config_interrup	        
+	call	config_tmr0		; Pre1:8 1s
+	call	config_tmr1		; Pre1:2 2ms
+	call	config_tmr2		; Pre1:16 Pos 1:16 500ms
+	clrf	var_segundos		
+	clrf	var_min			
+	clrf	var_hora	      
+	clrf	var_dias			
+	incf	var_dias	        ; Empezar en dia 1
+	clrf	var_mes			
+	incf	var_mes			; Empezar en mes 1
+	clrf	segundos			
+	bsf	segundos,0		        
+	clrf	estados		        
+	clrf	modos
+	bsf	modos,0
+	clrf	meses_var
+	bsf	meses_var, 2
+	banksel PORTA
+	
+; *****************************************************************************
+;                                    LOOP                                     
+; ***************************************************************************** 
+    loop:    
+	call antirebotes
+	
+	btfsc	modos, 0 ; Si bit 0 de modos es 1, mostrar reloj
+	call	mostrar_reloj    
+	
+	btfsc	modos, 1 ; Si bit 1 de modos es 1,mostrar calendario
+	call	mostrar_fecha
+	
+	btfsc	modos, 2 ; Si bit 2 de modos es 1,mostrar reloj
+	call	mostrar_reloj 
+	
+	btfsc	modos, 3 ; Si bit 3 de modos es 1,mostrar calendario
+	call	mostrar_fecha 
+	
+    ;********Limites (mes,dias y horas)****************************************         
+	btfsc	var_min, 7	; límite de 59 min
+	call	lim_min
+	btfsc	var_hora, 7	; límite de 23 horas
+	call	lim_horas	
+	btfsc	var_mes, 7	; límite de 12 meses
+	call	lim_meses
+	call    lim_segundos	; 60s
+	call	lim_minu	        ; 60 min
+	call	dias_febrero    ; 28 dias
+	call	lim_hor       ; 24 hrs
+	call	lim_mes	        ; 12 meses
+	call    lim_1mes	; 1 mes
+	call	limite_dias	    ; según el mes
+	call	limite_inferior_dias ; según el mes 
+    goto	loop
+    
+    antirebotes:
+    movlw 150 
+    movwf delay
+    decfsz delay, 1
+    goto $-1
+    return
+; *****************************************************************************
+;                                 RUTINAS                                 
+; *****************************************************************************     
+    limite_inferior_dias:
+	movf    var_dias, w	
+	sublw   0		
+	btfss   STATUS,2	
+	return			; Es 1, return
+	decf	var_mes		; Decrementar meses
+	clrf	var_dias	; Limpiar dias
+	movf	var_mes, w	; Pasar meses a w
+	call	tablaMESES	; Llamar a la tabla
+	movwf	var_dias
+	decf	var_dias	
+	btfsc	var_dias, 7	;limpiar las variables
+	clrf	var_dias
+    return
+    
+    dias_febrero:
+	movf    var_mes, w	
+	sublw   2             ;si el mes es febrero
+	btfss   STATUS,2	
+	return	              ; Es 1, return
+    ;******* Si los días están sobre 28 y se cambia el mes a febrero***********
+	call	lim_31D	
+	call	lim_30D	
+	call	lim_29D
+	
+    return
+    
+    lim_31D:
+	movf    var_dias, w	  
+	sublw   31	    ; si el mes tiene 31 días
+	btfss   STATUS,2    
+	return		    ; Es 1, return
+	clrf	var_dias	    
+	movlw	28	    ; mover 28 a dias
+	movwf	var_dias
+    return
+    
+    lim_30D:
+	movf    var_dias, w	   
+	sublw   30	    ; si el mes tiene 30 días
+	btfss   STATUS,2    
+	return		    ; Es 1, return
+	clrf	var_dias	  
+	movlw	28	    ; mover 28 a dias
+	movwf	var_dias
+    return
+    
+    lim_29D:
+	movf    var_dias, w	   
+	sublw   29	    ; si el es febrero
+	btfss   STATUS,2    
+	return		    ; Es 1, return
+	clrf	var_dias	   
+	movlw	28	    ; mover 28 a dias
+	movwf	var_dias
+    return
+    
+    lim_meses:
+	clrf	var_mes	   
+	movlw	0xC       ; 12 a meses
+	movwf	var_mes
+    return
+    
+    lim_min:
+	decf	var_hora	    
+	clrf	var_min	    
+	movlw	0x3B   ;59 a minutos
+	movwf	var_min
+    return
+    
+    lim_horas:
+	clrf	var_hora	   
+	movlw	0x17  ;23 a horas
+	movwf	var_hora
+    return
+    
+    mostrar_fecha:
+	movf	var_dias,w	
+	wdivl	10, cociente, residuo 	; divide unidades de decenas 
+	
+	movf	residuo ,w	
+	call	tablaDisplay	; llamar a la tabla 
+	movwf	display2	; moverlo al display
+	
+	movf	cociente,w	
+	call	tablaDisplay	; Llamar a la tabla
+	movwf	display3	; moverlo al display
+	
+	movf	var_mes,w			
+	wdivl	10, cociente, residuo 	; divide unidades de decenas  
+	
+	movf	residuo ,w	
+	call	tablaDisplay	; llamar a la tabla 
+	movwf	display0	; moverlo al display
+	
+	movf	cociente,w	
+	call	tablaDisplay	; llamar a la tabla 
+	movwf	display1	; moverlo al display
+    return
+        
+    config_io:
+	banksel ANSEL	 
+	clrf    ANSEL	; pines digitales
+	clrf    ANSELH
+	
+	banksel TRISA	
+	bcf	TRISA,0	; salidas
+	bcf	TRISA,1	 
+	bcf	TRISA,2  
+	bcf	TRISA,3	 
+	clrf    TRISC	
+	bcf	TRISD, 4	
+	bcf	TRISD, 5
+	bcf	TRISE, 0
+	
+	bsf	TRISB, 0	; entradas
+	bsf	TRISB, 1	
+	bsf	TRISB, 2	
+	bsf	TRISB, 3	
+	bsf	TRISB, 4	
+	
+	bcf	OPTION_REG, 7	;pull ups
+	bsf	WPUB, 0
+	bsf	WPUB, 1
+	bsf	WPUB, 2
+	bsf	WPUB, 3
+	bsf	WPUB, 4
+	
 
-;****************************RUTINAS DE INTERRUPCIONES**************************  
-int_tm0:
-    banksel PORTA	
-    movlw   217
-    movwf   TMR0	    ;reseteo del Timer0
-    bcf	    T0IF	    ;limpieza de la bandera 
-    incf    cont_timer0	    ;incremento de nuestra variable para lograr
-    return		    ;que el display cambie cada segundo
-
-;*****************************RUTINAS DEL LOOP**********************************
-siete_seg_auto:
-    movlw   50		    ;ya que el timer cuenta cada 20ms, debe contar 50
-    subwf   cont_timer0, w  ;veces para llegar al segundo 
-    btfsc   STATUS,2
-    call    clock
+	banksel PORTA	       ;limpieza de puertos
+	bcf	PORTA,0	
+	bcf	PORTA,1	
+	bcf	PORTA,2	
+	bcf	PORTA,3	
+	clrf    PORTC
+	bcf	PORTD,4
+	bcf	PORTD,5
+	bcf	PORTE,0	
+    return
+    
+    config_iocrb:
+	banksel	TRISA
+	bsf	IOCB, 0
+	bsf	IOCB, 1
+	bsf	IOCB, 2
+	bsf	IOCB, 3
+	bsf	IOCB, 4
+	
+	banksel	PORTA
+	movf	PORTB, W    
+	bcf	RBIF
+    return
+    
+    config_reloj:	 ; 500 kHz
+	banksel OSCCON
+	bsf	SCS
+	bcf	IRCF2	; OSCCON, 6
+	bsf	IRCF1	; OSCCON, 5
+	bsf	IRCF0	; OSCCON, 4
+    return
+    
+    config_interrup:	;interrupciones
+	banksel PORTA
+	bsf	GIE	; Interrupciones globales
+	bsf	T0IE	; Interrupcion tmr0
+	bsf	PEIE	
+	bsf	RBIE	
+	bcf	RBIF	
+	
+	banksel TRISA
+	bsf	TMR1IE	; tmr1
+	bsf	TMR2IE  ; tmr2
+		
+	banksel PORTA
+	bcf	T0IF	; tmro
+	bcf	TMR1IF	; tmr1
+	bcf	TMR2IF	; trm2
+    return
+    
+    config_tmr0:
+	BANKSEL TRISA	
+	bcf	T0CS	
+	bcf	PSA	
+	bcf	PS2
+	bcf	PS1
+	bcf	PS0	; p=1:2
+	restart_tmr0
+    return
+    
+    config_tmr1:
+	BANKSEL PORTA
+	bcf	TMR1GE  ; siempre contando
+	bcf	T1OSCEN ; low power off
+	bsf	TMR1ON
+	bcf	TMR1CS
+	bcf	T1CKPS1
+	bsf	T1CKPS0	; p=1:8
+	;reinicio timer1
+	banksel PORTA
+	    movlw   0x0B	
+	    movwf   TMR1H
+	    movlw   0xDC	
+	    movwf   TMR1L	; Ciclo de 1s
+	    bcf     TMR1IF	
+    return
+    
+    config_tmr2:
+	banksel PORTA
+	bsf	TMR2ON	 
+	bsf	T2CKPS1	
+	bsf	T2CKPS0	; pre=1:16
+	bsf	TOUTPS3	    
+	bsf	TOUTPS2	
+	bsf	TOUTPS1	
+	bsf	TOUTPS0	; pos=1:16
+	clrf	TMR2	
+	
+	banksel TRISA
+	movlw	240	; Precarga para el PR2
+	movwf	PR2	; Ciclo de 500 ms
+	;reincio timer 2
+	    banksel PORTA
+	    bcf TMR2IF	
+    return
+    
+    lim_segundos:	 
+	movf    var_segundos, w	
+	sublw   60		; hasta 60 
+	btfss   STATUS,2	
+	return			; Es 1, return
+	clrf    var_segundos	; Es 0
+	incf	var_min
+    return	
+    
+    lim_minu:
+	movf    var_min, w	
+	sublw   60		; hasta 60 
+	btfss   STATUS,2	
+	return			; Es 1, return
+	clrf    var_min		; Es 0
+	incf	var_hora
+    return
+    
+    lim_hor:
+	movf    var_hora, w	
+	sublw   24		; hasta 24
+	btfss   STATUS,2	
+	return			; Es 1, return
+	clrf    var_hora        ; Es 0
+	incf	var_dias
     return
    
-clock:
-    clrf    cont_timer0	    ;se resetea la variable
-    incf    cont_u_seg	    ;se incrementa la varable que lleva el valor del
-    movf    cont_u_seg, W    ;segundo 7 segmentos, se llama la tabla para 
-    sublw   10
-    btfsc   STATUS,2
-    call    decenas_seg
-    movf    cont_u_seg, W
-    call    siete_seg	    ;traducirla y pegarla en el PORTD
-    movwf   PORTD 
+    limite_dias:	
+	movf	var_mes, w	
+	call	tablaMESES	; llamar a la tabla
+	
+	subwf	var_dias, w	
+	btfsc	STATUS, 2	; si es 0, resetear dias
+	goto	reset_dias
     return
     
-    decenas_seg:
-	clrf cont_u_seg
-	call aumento_d_segundos
-	return
-    
-aumento_d_segundos:
-    clrf    cont_timer0	    ;se resetea la variable
-    incf    cont_d_seg      ;incrementamos las decenas de segundos por si acaso
-    movf    cont_d_seg, W
-    sublw   6
-    btfsc   STATUS, 2
-    call    unidad_min
-    movf    cont_d_seg, W
-    call    siete_seg	    ;traducirla y pegarla en el PORTD
-    movwf   PORTC
-    bcf    T0IF
+    reset_dias:			;empieza la cuenta otra vez
+	movlw	1
+	movwf	var_dias
+	incf	var_mes
     return
     
-    unidad_min:
-	clrf cont_d_seg
-	call aumento_u_minutos
-	return
-    
-aumento_u_minutos:
-    clrf    cont_timer0	    ;se resetea la variable
-    incf    cont_u_min     ;incrementamos las decenas de segundos por si acaso
-    movf    cont_u_min, W
-    sublw   10
-    btfsc   STATUS, 2
-    call    decena_min
-    movf    cont_u_min, W
-    call    siete_seg	    ;traducirla y pegarla en el PORTD
-    movwf   PORTC
-    bcf    T0IF
-    return
-
-    decena_min:
-       clrf cont_u_min
-       call aumento_d_minutos
-       return
-       
-aumento_d_minutos:
-    clrf    cont_timer0	    ;se resetea la variable
-    incf    cont_d_min      ;incrementamos las decenas de segundos por si acaso
-    movf    cont_d_min, W
-    sublw   6
-    btfsc   STATUS, 2
-    call    unidad_hora
-    movf    cont_d_min, W
-    call    siete_seg	    ;traducirla y pegarla en el PORTD
-    movwf   PORTC
-    bcf    T0IF
+    lim_mes:
+	movf    var_mes, w	
+	sublw   13		; hasta 12
+	btfss   STATUS,2	
+	return		; Es 1, return
+	clrf    var_mes	; Es 0
+	movlw	1	
+	movwf	var_mes	; configurar meses en 1
     return
     
-    unidad_hora:
-	 clrf cont_d_min
-	 call aumento_u_hora
-	 return   
-	 
-aumento_u_hora:
-    clrf    cont_timer0	    ;se resetea la variable
-    incf    cont_u_hora     ;incrementamos las decenas de segundos por si acaso
-    movf    cont_u_hora, W
-    sublw   10
-    btfsc   STATUS, 2
-    call    decena_hora
-    movf    cont_u_hora, W
-    call    siete_seg	    ;traducirla y pegarla en el PORTD
-    movwf   PORTC
-    bcf    T0IF
+    lim_1mes:
+	movf    var_mes, w	
+	sublw   0		
+	btfss   STATUS,2	
+	return		; Es 1, return
+	clrf    var_mes	; Es 0
+	movlw	12	;
+	movwf	var_mes	; configurar meses en 12
     return
-
-    decena_hora:
-       clrf cont_u_hora
-       call aumento_d_hora
-       return
-       
-aumento_d_hora:
-    clrf    cont_timer0	    ;se resetea la variable
-    incf    cont_d_hora      ;incrementamos las decenas de segundos por si acaso
-    movf    cont_d_hora, W
-    sublw   6
-    btfsc   STATUS, 2
-    clrf    cont_d_hora
-    movf    cont_d_hora, W
-    call    siete_seg	    ;traducirla y pegarla en el PORTD
-    movwf   PORTC
-    bcf    T0IF
+    
+    mostrar_reloj:
+	movf	var_min,w	
+	wdivl	10, cociente, residuo 	; separa unidades de  decenas
+	
+	movf	residuo ,w	
+	call	tablaDisplay	; llamar a la tabla 
+	movwf	display0	; mover al display
+	
+	movf	cociente,w	
+	call	tablaDisplay	; llamar a la tabla
+	movwf	display1	; mover al display
+		
+	
+	movf	var_hora,w		
+	wdivl	10, cociente, residuo 	; separa unidades de  decenas 
+	
+	movf	residuo ,w	
+	call	tablaDisplay	; llamar a tabla 
+	movwf	display2	; mover al display
+	
+	movf	cociente,w	
+	call	tablaDisplay	; llamar a tabla 
+	movwf	display3	; mover al display
     return
-
-
+    
     END
