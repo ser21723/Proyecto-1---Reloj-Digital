@@ -30,12 +30,6 @@ CONFIG FOSC=INTRC_NOCLKOUT ; Oscilador externo de cristal a 1MHz
 ;*****************************************************************************
 ;                                  MACROS                                    
 ;*****************************************************************************
-restart_tmr0 macro ; Reseteo del tmr0
-    banksel PORTA   
-    movlw   6	    ; N = 61   
-    movwf   TMR0    ; Ciclo de 2ms
-    bcf	    T0IF    
-endm
     
 wdivl	macro	divisor,cociente,residuo    ; Macro de divisor
 	movwf	conteo	    
@@ -139,7 +133,12 @@ PSECT intVect, class=CODE, delta=2, abs
     ; 	                       INTERRUPCION DEL TMR0	                      
     ;***************************************************************************
 	int_tmr0: ;MULTIPLEXADO
-	restart_tmr0
+	;reinicio timer0
+	    banksel PORTA   
+	    movlw   6	    ; N = 61   
+	    movwf   TMR0    ; Ciclo de 2ms
+	    bcf	    T0IF  
+	
 	btfsc	display,0	; Si display 0 es 1, va a display_0
 	goto	display_0
 	btfsc	display,1	; Si display 1 es 1, va a display_1
@@ -671,7 +670,12 @@ PSECT CODE, delta=2, abs
 	bcf	PS2
 	bcf	PS1
 	bcf	PS0	; p=1:2
-	restart_tmr0
+	
+	;reinicio timer0
+	banksel PORTA   
+	movlw   6	    ; N = 61   
+	movwf   TMR0    ; Ciclo de 2ms
+	bcf	    T0IF    
     return
     
     config_tmr1:
@@ -796,5 +800,5 @@ PSECT CODE, delta=2, abs
 	call	tablaDisplay	; llamar a tabla 
 	movwf	display3	; mover al display
     return
-    
-    END
+
+END
